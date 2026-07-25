@@ -665,6 +665,7 @@
           tr.children[7].textContent = money(t);
           tr.children[8].textContent = money(p);
           tr.children[8].className = "readout " + (p >= 0 ? "profit-pos" : "profit-neg");
+          updateInvFooterTotals();
           renderStats();
           scheduleSave();
         });
@@ -679,6 +680,10 @@
     });
 
     // footer totals (based on full inventory, not filtered)
+    updateInvFooterTotals();
+  }
+
+  function updateInvFooterTotals(){
     const totalSales = inventory.reduce((s,i)=> s + i.sold * i.selling, 0);
     const totalProfit = inventory.reduce((s,i)=> s + i.sold * (i.selling - i.buying), 0);
     document.getElementById("invTotalSales").textContent = money(totalSales);
