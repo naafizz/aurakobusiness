@@ -343,12 +343,6 @@
       <div class="brand-sub">দোকানের হিসাব-নিকাশ — সব হিসাব এক জায়গায়, নিজে নিজে সংরক্ষিত হয়</div>
     </div>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-      <div class="save-indicator" id="syncBox" style="gap:8px;">
-        <span style="font-size:12px; color:var(--ink-soft); font-weight:600;">Sync ID:</span>
-        <input type="text" id="syncIdDisplay" readonly style="border:none;background:transparent;font-family:'IBM Plex Mono',monospace;font-size:12.5px;width:100px;color:var(--ink); padding:0;">
-        <button class="reset-btn" id="copySyncBtn">কপি</button>
-        <button class="reset-btn" id="changeSyncBtn">পাল্টান</button>
-      </div>
       <button class="reset-btn" id="exportBtn">ব্যাকআপ ডাউনলোড</button>
       <button class="reset-btn" id="resetBtn">সব তথ্য মুছে ফেলুন</button>
       <div class="save-indicator">
@@ -551,42 +545,8 @@
   }
   function num(v){ const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 
-  /* ---------------- Storage (kvdb.io — synced across browsers/devices via a Sync ID) ---------------- */
-  const BLOB_KEY = "aurako:blobid:v1";
-  const KVDB_BASE = "https://kvdb.io/";
-  const KVDB_DATA_KEY = "data";
-  let blobId = null;
-  let syncOK = true;
-
-  async function fetchRemote(bucket){
-    const res = await fetch(KVDB_BASE + bucket + "/" + KVDB_DATA_KEY);
-    if(res.status === 404) return null; // bucket exists but no data written yet
-    if(!res.ok) throw new Error("fetch failed: " + res.status);
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
-  }
-
-  async function createRemote(){
-    const res = await fetch(KVDB_BASE, { method: "POST" });
-    if(!res.ok) throw new Error("create failed: " + res.status);
-    const id = (await res.text()).trim();
-    if(!id) throw new Error("no id returned");
-    return id;
-  }
-
-  async function pushRemote(bucket, data){
-    const res = await fetch(KVDB_BASE + bucket + "/" + KVDB_DATA_KEY, {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify(data)
-    });
-    if(!res.ok) throw new Error("push failed: " + res.status);
-  }
-
-  function setSyncDisplay(id){
-    const el = document.getElementById("syncIdDisplay");
-    if(el) el.value = id || "";
-  }
+  /* ---------------- Storage (own backend: /api/data, backed by Vercel KV database) ---------------- */
+  const API_URL = "/api/data";
 
   function cacheLocally(){
     try{
@@ -597,52 +557,22 @@
   }
 
   async function loadAll(){
-    blobId = localStorage.getItem(BLOB_KEY);
-
-    if(!blobId){
-      // first run on this device with no sync id yet — create a fresh shared bucket
-      try{
-        blobId = await createRemote();
-        localStorage.setItem(BLOB_KEY, blobId);
-        inventory = defaultInventory;
-        daily = defaultDaily;
-        document.getElementById("notesArea").value = "";
-        await pushRemote(blobId, { inventory: defaultInventory, daily: defaultDaily, notes: "" });
-        setSyncDisplay(blobId);
-        cacheLocally();
-        renderAll();
-        alert("আপনার Sync ID তৈরি হয়েছে: " + blobId + "\n\nঅন্য ব্রাউজার/ডিভাইসে একই হিসাব দেখতে, ওখানে এই অ্যাপ খুলে 'পাল্টান' বাটনে এই ID টা বসিয়ে দিন। ID টা এখন কপি করে রাখুন।");
-        return;
-      }catch(e){
-        syncOK = false;
-        setSyncDisplay("(অফলাইন)");
-        inventory = defaultInventory;
-        daily = defaultDaily;
-        renderAll();
-        alert("অনলাইন সিঙ্ক শুরু করা যায়নি (ইন্টারনেট সংযোগ যাচাই করুন)। আপাতত অফলাইন মোডে চলছে।");
-        return;
-      }
-    }
-
-    setSyncDisplay(blobId);
     try{
-      const data = await fetchRemote(blobId);
+      const res = await fetch(API_URL);
+      if(!res.ok) throw new Error("fetch failed: " + res.status);
+      const data = await res.json();
       if(data){
         inventory = Array.isArray(data.inventory) ? data.inventory : defaultInventory;
         daily = Array.isArray(data.daily) ? data.daily : defaultDaily;
         document.getElementById("notesArea").value = data.notes || "";
       } else {
-        // bucket exists but nothing written yet
         inventory = defaultInventory;
         daily = defaultDaily;
         document.getElementById("notesArea").value = "";
-        await pushRemote(blobId, { inventory, daily, notes: "" });
       }
-      syncOK = true;
       cacheLocally();
     }catch(e){
-      // network issue — fall back to this device's last cached copy
-      syncOK = false;
+      // network/API issue — fall back to this device's last cached copy
       try{
         const rawInv = localStorage.getItem(INV_KEY);
         const rawDaily = localStorage.getItem(DAILY_KEY);
@@ -663,42 +593,6 @@
     scheduleSave();
   });
 
-  document.getElementById("copySyncBtn").addEventListener("click", ()=>{
-    const val = document.getElementById("syncIdDisplay").value;
-    if(!val) return;
-    navigator.clipboard.writeText(val).then(()=>{
-      const btn = document.getElementById("copySyncBtn");
-      const old = btn.textContent;
-      btn.textContent = "কপি হয়েছে";
-      setTimeout(()=> btn.textContent = old, 1200);
-    }).catch(()=> alert("Sync ID: " + val));
-  });
-
-  document.getElementById("changeSyncBtn").addEventListener("click", async ()=>{
-    const input = prompt("অন্য ডিভাইস/ব্রাউজারের Sync ID বসান (ওই ডিভাইসে 'কপি' বাটনে পাওয়া ID):", "");
-    if(!input) return;
-    const newId = input.trim();
-    if(!newId) return;
-    document.getElementById("saveText").textContent = "সংযুক্ত হচ্ছে…";
-    try{
-      const data = await fetchRemote(newId);
-      blobId = newId;
-      localStorage.setItem(BLOB_KEY, blobId);
-      inventory = data && Array.isArray(data.inventory) ? data.inventory : [];
-      daily = data && Array.isArray(data.daily) ? data.daily : [];
-      document.getElementById("notesArea").value = (data && data.notes) || "";
-      setSyncDisplay(blobId);
-      syncOK = true;
-      cacheLocally();
-      renderAll();
-      document.getElementById("saveText").textContent = "সংরক্ষিত";
-      alert("সংযুক্ত হয়েছে। এখন থেকে এই ডিভাইসও একই হিসাব দেখাবে।");
-    }catch(e){
-      alert("এই Sync ID দিয়ে ডেটা পাওয়া যায়নি। ID টা সঠিকভাবে কপি-পেস্ট হয়েছে কিনা যাচাই করুন।");
-      document.getElementById("saveText").textContent = "সংরক্ষিত";
-    }
-  });
-
   function scheduleSave(){
     const dot = document.getElementById("saveDot");
     const text = document.getElementById("saveText");
@@ -709,21 +603,18 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async ()=>{
       cacheLocally();
-      if(!blobId){
-        dot.classList.remove("saving");
-        text.textContent = "অফলাইন (সিঙ্ক নেই)";
-        notesText.textContent = "অফলাইন";
-        return;
-      }
       try{
         const payload = { inventory, daily, notes: document.getElementById("notesArea").value };
-        await pushRemote(blobId, payload);
-        syncOK = true;
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if(!res.ok) throw new Error("save failed: " + res.status);
         dot.classList.remove("saving");
         text.textContent = "সংরক্ষিত";
         notesText.textContent = "সংরক্ষিত";
       }catch(e){
-        syncOK = false;
         dot.classList.remove("saving");
         text.textContent = "সংরক্ষণ ব্যর্থ হয়েছে (ইন্টারনেট চেক করুন)";
         notesText.textContent = "ব্যর্থ হয়েছে";
