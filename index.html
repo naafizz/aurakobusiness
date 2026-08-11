@@ -132,9 +132,29 @@
     .main{padding:18px 16px 50px;}
     .row2{grid-template-columns:1fr;}
   }
+
+  /* Login screen */
+  .login-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;}
+  .login-box{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:32px 28px;width:100%;max-width:340px;text-align:center;box-shadow:0 8px 30px rgba(15,20,20,.06);}
+  .login-box .brand-mark{width:44px;height:44px;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-family:'Space Grotesk',sans-serif;font-size:19px;margin:0 auto 14px;}
+  .login-box h2{margin:0 0 22px;font-size:17px;font-weight:700;}
+  .login-box .field{text-align:left;}
+  .login-error{color:var(--danger);font-size:12.5px;margin:-4px 0 14px;display:none;}
+  .app{display:none;}
 </style>
 </head>
 <body>
+
+<div class="login-screen" id="login-screen">
+  <div class="login-box">
+    <div class="brand-mark">A</div>
+    <h2>Aurako Business Panel</h2>
+    <div class="field"><label>ইউজারনেম</label><input type="text" id="login-user" autocomplete="username"></div>
+    <div class="field"><label>পাসওয়ার্ড</label><input type="password" id="login-pass" autocomplete="current-password"></div>
+    <div class="login-error" id="login-error"></div>
+    <button class="btn btn-primary" id="login-btn" style="width:100%;justify-content:center;padding:11px;">লগইন করুন</button>
+  </div>
+</div>
 
 <div class="app">
   <aside class="sidebar" id="sidebar">
@@ -150,7 +170,10 @@
     <button class="nav-item" data-page="billing">🧾 <span>New Bill</span></button>
     <button class="nav-item" data-page="sales">📜 <span>Sales History</span></button>
     <button class="nav-item" data-page="settings">⚙️ <span>Settings</span></button>
-    <div class="sidebar-foot" id="sb-foot">aurako.shop</div>
+    <div class="sidebar-foot">
+      <div id="sb-foot">aurako.shop</div>
+      <button class="btn btn-ghost btn-sm" id="btn-logout" style="margin-top:8px;padding:4px 0;color:var(--muted);">লগআউট</button>
+    </div>
   </aside>
 
   <div class="mobile-bar">
@@ -259,7 +282,7 @@
         </div>
       </div>
       <div class="card" style="padding:0;overflow-x:auto;">
-        <table><thead><tr><th>ইনভয়েস</th><th>কাস্টমার</th><th>তারিখ</th><th style="text-align:right;">টোটাল</th><th></th></tr></thead>
+        <table><thead><tr><th>ইনভয়েস</th><th>কাস্টমার</th><th>তারিখ</th><th>প্রোডাক্ট</th><th style="text-align:right;">টোটাল</th><th></th></tr></thead>
         <tbody id="sales-body"></tbody></table>
         <div class="empty" id="sales-empty" style="display:none;">কোনো সেল রেকর্ড নেই</div>
       </div>
@@ -305,6 +328,18 @@
   </div>
 </div>
 
+<!-- Sale Details Modal -->
+<div class="modal-backdrop" id="sale-details-modal">
+  <div class="modal" style="max-width:520px;">
+    <h3>বিক্রির বিস্তারিত</h3>
+    <div id="sd-body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="sd-close">বন্ধ করুন</button>
+      <button class="btn btn-primary" id="sd-pdf">PDF ডাউনলোড</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -323,17 +358,69 @@
   let editingProductId = null;
   let saveTimer = null;
 
+  // ---------- auth ----------
+  const TOKEN_KEY = 'aurako-token';
+  const getToken = () => localStorage.getItem(TOKEN_KEY);
+  const setToken = t => localStorage.setItem(TOKEN_KEY, t);
+  const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+  const authHeaders = () => ({ 'Authorization': 'Bearer ' + (getToken()||'') });
+
+  function showLoginScreen(err){
+    document.getElementById('login-screen').style.display = 'flex';
+    document.querySelector('.app').style.display = 'none';
+    const errEl = document.getElementById('login-error');
+    if(err){ errEl.textContent = err; errEl.style.display = 'block'; }
+    else { errEl.style.display = 'none'; }
+  }
+  function showApp(){
+    document.getElementById('login-screen').style.display = 'none';
+    document.querySelector('.app').style.display = 'flex';
+  }
+
+  async function attemptLogin(){
+    const username = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value;
+    const btn = document.getElementById('login-btn');
+    btn.disabled = true;
+    try{
+      const res = await fetch('/api/login', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.token){
+        showLoginScreen(data.error === 'invalid credentials' ? 'ভুল ইউজারনেম বা পাসওয়ার্ড' : 'লগইন ব্যর্থ, আবার চেষ্টা করুন');
+        return;
+      }
+      setToken(data.token);
+      showApp();
+      loadData();
+    }catch(e){
+      showLoginScreen('নেটওয়ার্ক এরর — ইন্টারনেট চেক করুন');
+    }finally{
+      btn.disabled = false;
+    }
+  }
+  document.getElementById('login-btn').addEventListener('click', attemptLogin);
+  document.getElementById('login-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') attemptLogin(); });
+  document.getElementById('btn-logout').addEventListener('click', ()=>{
+    clearToken();
+    showLoginScreen();
+  });
+
   // ---------- persistence ----------
   async function loadData(){
     try{
-      const res = await fetch('/api/data');
+      const res = await fetch('/api/data', { headers: authHeaders() });
+      if(res.status === 401){ clearToken(); showLoginScreen('সেশন শেষ হয়ে গেছে, আবার লগইন করুন'); return; }
       const data = await res.json();
       if(data && typeof data === 'object'){
         state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), data);
         state.business = Object.assign({}, DEFAULT_STATE.business, data.business||{});
       }
     }catch(e){
-      // fall back to local cache if offline / not deployed yet
+      // fall back to local cache if offline
       const cached = localStorage.getItem('aurako-cache');
       if(cached){ try{ state = JSON.parse(cached);}catch(_){} }
     }
@@ -345,11 +432,12 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async ()=>{
       try{
-        await fetch('/api/data', {
+        const res = await fetch('/api/data', {
           method:'POST',
-          headers:{'Content-Type':'application/json'},
+          headers: Object.assign({'Content-Type':'application/json'}, authHeaders()),
           body: JSON.stringify(state)
         });
+        if(res.status === 401){ clearToken(); showLoginScreen('সেশন শেষ হয়ে গেছে, আবার লগইন করুন'); return; }
         if(showToast) toast('সেভ হয়েছে ✓');
       }catch(e){
         toast('সেভ ব্যর্থ — ইন্টারনেট চেক করুন');
@@ -691,22 +779,36 @@
   function renderSales(){
     const body = document.getElementById('sales-body');
     const list = [...state.sales].reverse();
-    body.innerHTML = list.map(s=>`
+    body.innerHTML = list.map(s=>{
+      const items = s.items||[];
+      const itemCount = items.reduce((a,it)=>a+(+it.qty||0),0);
+      let summary = items.map(it=>`${escapeHtml(it.name)} ×${it.qty}`).join(', ');
+      if(summary.length > 46) summary = summary.slice(0,46) + '…';
+      return `
       <tr>
         <td>${s.invoiceNo}</td>
         <td>${escapeHtml(s.customerName||'—')}</td>
         <td>${fmtDate(s.date)}</td>
+        <td style="max-width:220px;">
+          <div style="font-size:12.5px;">${summary || '—'}</div>
+          <div style="font-size:11px;color:var(--muted);">${itemCount} পিস · ${items.length} আইটেম</div>
+        </td>
         <td style="text-align:right;font-weight:600;">${fmt(s.total)}</td>
-        <td style="text-align:right;">
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn btn-ghost btn-sm" data-details="${s.id}">বিস্তারিত</button>
           <button class="btn btn-ghost btn-sm" data-pdf="${s.id}">PDF</button>
           <button class="btn btn-danger btn-sm" data-delsale="${s.id}">মুছুন</button>
         </td>
       </tr>
-    `).join('');
+    `;}).join('');
     document.getElementById('sales-empty').style.display = list.length? 'none':'block';
     body.querySelectorAll('[data-pdf]').forEach(b=>b.addEventListener('click', ()=>{
       const s = state.sales.find(x=>x.id===b.dataset.pdf);
       if(s) downloadReceiptPDF(s);
+    }));
+    body.querySelectorAll('[data-details]').forEach(b=>b.addEventListener('click', ()=>{
+      const s = state.sales.find(x=>x.id===b.dataset.details);
+      if(s) showSaleDetails(s);
     }));
     body.querySelectorAll('[data-delsale]').forEach(b=>b.addEventListener('click', ()=>{
       if(confirm('এই সেল রেকর্ড মুছে ফেলতে চান?')){
@@ -717,6 +819,39 @@
       }
     }));
   }
+
+  // ---------- sale details modal ----------
+  function showSaleDetails(s){
+    const rows = (s.items||[]).map(it=>`
+      <tr>
+        <td>${escapeHtml(it.name)}</td>
+        <td style="text-align:center;">${it.qty}</td>
+        <td style="text-align:right;">${fmt(it.price)}</td>
+        <td style="text-align:right;font-weight:600;">${fmt(it.price*it.qty)}</td>
+      </tr>
+    `).join('');
+    const body = document.getElementById('sd-body');
+    body.innerHTML = `
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:10px;">
+        ইনভয়েস <strong style="color:var(--ink);">#${s.invoiceNo}</strong> · ${fmtDate(s.date)}
+        ${s.customerName ? ' · '+escapeHtml(s.customerName) : ''}
+      </div>
+      <table>
+        <thead><tr><th>প্রোডাক্ট</th><th style="text-align:center;">পরিমাণ</th><th style="text-align:right;">দাম</th><th style="text-align:right;">সাবটোটাল</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" class="empty">কোনো আইটেম নেই</td></tr>'}</tbody>
+      </table>
+      <div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px;font-size:13px;">
+        <div style="display:flex;justify-content:space-between;padding:2px 0;"><span>সাবটোটাল</span><span>${fmt(s.subtotal)}</span></div>
+        ${s.discountAmount>0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;color:var(--warn);"><span>ডিসকাউন্ট${s.discountType==='percent' ? ' ('+s.discountValue+'%)' : ''}</span><span>-${fmt(s.discountAmount)}</span></div>` : ''}
+        <div style="display:flex;justify-content:space-between;padding:6px 0 0;font-weight:700;font-size:15px;"><span>মোট</span><span>${fmt(s.total)}</span></div>
+      </div>
+    `;
+    document.getElementById('sale-details-modal').classList.add('active');
+    document.getElementById('sd-pdf').onclick = ()=>downloadReceiptPDF(s);
+  }
+  document.getElementById('sd-close').addEventListener('click', ()=>{
+    document.getElementById('sale-details-modal').classList.remove('active');
+  });
 
   // ---------- settings ----------
   function renderSettings(){
@@ -751,7 +886,12 @@
   }
 
   goTo('dashboard');
-  loadData();
+  if(getToken()){
+    showApp();
+    loadData();
+  } else {
+    showLoginScreen();
+  }
 })();
 </script>
 </body>
