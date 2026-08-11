@@ -1,8 +1,32 @@
 import { kv } from '@vercel/kv';
+import crypto from 'crypto';
 
 const KEY = 'aurako-business-data';
 
+function isValidToken(token) {
+  const SECRET = process.env.AUTH_SECRET;
+  if (!token || !SECRET) return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [payload, sig] = parts;
+  const expected = crypto.createHmac('sha256', SECRET).update(payload).digest('base64url');
+  if (sig !== expected) return false;
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return typeof data.exp === 'number' && data.exp > Date.now();
+  } catch (e) {
+    return false;
+  }
+}
+
 export default async function handler(req, res) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!isValidToken(token)) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+
   if (req.method === 'GET') {
     try {
       const data = await kv.get(KEY);
@@ -12,7 +36,6 @@ export default async function handler(req, res) {
     }
     return;
   }
-
   if (req.method === 'POST') {
     try {
       const body = req.body;
@@ -27,6 +50,5 @@ export default async function handler(req, res) {
     }
     return;
   }
-
   res.status(405).json({ error: 'method not allowed' });
 }
