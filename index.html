@@ -585,12 +585,15 @@
   // ---------- RENDER: billing ----------
   function renderBilling(){
     const pick = document.getElementById('product-pick');
-    pick.innerHTML = state.products.map(p=>`
-      <button class="pick-chip" data-add="${p.id}">
+    pick.innerHTML = state.products.map(p=>{
+      const tracked = typeof p.stock === 'number';
+      const outOfStock = tracked && p.stock <= 0;
+      return `
+      <button class="pick-chip" data-add="${p.id}" ${outOfStock? 'disabled':''} style="${outOfStock? 'opacity:.45;cursor:not-allowed;':''}">
         <span class="pn">${escapeHtml(p.name)}</span>
-        <span class="pp">${fmt(p.price)}</span>
+        <span class="pp">${fmt(p.price)}${tracked? (outOfStock? ' · স্টক নেই' : ' · স্টক '+p.stock) : ''}</span>
       </button>
-    `).join('');
+    `;}).join('');
     document.getElementById('pick-empty').style.display = state.products.length? 'none':'block';
     pick.querySelectorAll('[data-add]').forEach(b=>b.addEventListener('click', ()=>addToCart(b.dataset.add)));
     renderCart();
@@ -599,7 +602,13 @@
   function addToCart(productId){
     const p = state.products.find(x=>x.id===productId);
     if(!p) return;
+    const tracked = typeof p.stock === 'number';
     const existing = cart.find(c=>c.productId===productId);
+    const currentQty = existing ? existing.qty : 0;
+    if(tracked && currentQty + 1 > p.stock){
+      toast(p.stock<=0 ? 'এই প্রোডাক্ট স্টকে নেই' : 'স্টকে আর নেই — সর্বোচ্চ '+p.stock+' টা আছে');
+      return;
+    }
     if(existing) existing.qty += 1;
     else cart.push({productId:p.id, name:p.name, price:p.price, qty:1});
     renderCart();
@@ -608,18 +617,29 @@
   function renderCart(){
     const list = document.getElementById('cart-list');
     document.getElementById('cart-empty').style.display = cart.length? 'none':'block';
-    list.innerHTML = cart.map((c,i)=>`
+    list.innerHTML = cart.map((c,i)=>{
+      const p = state.products.find(x=>x.id===c.productId);
+      const tracked = p && typeof p.stock === 'number';
+      const maxAttr = tracked ? `max="${p.stock}"` : '';
+      return `
       <div class="cart-row">
         <div>${escapeHtml(c.name)}<div style="font-size:11.5px;color:var(--muted);">${fmt(c.price)} × </div></div>
-        <input type="number" min="1" value="${c.qty}" data-qty="${i}">
+        <input type="number" min="1" ${maxAttr} value="${c.qty}" data-qty="${i}">
         <div style="font-weight:600;text-align:right;">${fmt(c.price*c.qty)}</div>
         <button class="btn-danger" data-remove="${i}" style="border:none;background:none;font-size:16px;">×</button>
       </div>
-    `).join('');
+    `;}).join('');
     list.querySelectorAll('[data-qty]').forEach(inp=>{
       inp.addEventListener('input', ()=>{
         const i = +inp.dataset.qty;
-        cart[i].qty = Math.max(1, parseInt(inp.value||'1',10));
+        const c = cart[i];
+        const p = state.products.find(x=>x.id===c.productId);
+        let qty = Math.max(1, parseInt(inp.value||'1',10));
+        if(p && typeof p.stock === 'number' && qty > p.stock){
+          qty = p.stock;
+          toast('সর্বোচ্চ '+p.stock+' টা স্টকে আছে');
+        }
+        c.qty = qty;
         renderCart();
       });
     });
